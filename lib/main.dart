@@ -1,115 +1,258 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
+import 'package:latlng/latlng.dart';
+import 'package:map/map.dart';
+import 'package:flutter/services.dart' show rootBundle;
+import 'dart:convert';
+import 'package:ncmb/ncmb.dart';
 
 void main() {
+  NCMB('9170ffcb91da1bbe0eff808a967e12ce081ae9e3262ad3e5c3cac0d9e54ad941',
+      '9e5014cd2d76a73b4596deffdc6ec4028cfc1373529325f8e71b7a6ed553157d');
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({Key? key}) : super(key: key);
-
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      debugShowCheckedModeBanner: false,
       title: 'Flutter Demo',
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // Try running your application with "flutter run". You'll see the
-        // application has a blue toolbar. Then, without quitting the app, try
-        // changing the primarySwatch below to Colors.green and then invoke
-        // "hot reload" (press "r" in the console where you ran "flutter run",
-        // or simply save your changes to "hot reload" in a Flutter IDE).
-        // Notice that the counter didn't reset back to zero; the application
-        // is not restarted.
-        primarySwatch: Colors.blue,
+        primarySwatch: Colors.lightBlue,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const MainPage(),
     );
   }
 }
 
+class MainPage extends StatefulWidget {
+  const MainPage({Key? key}) : super(key: key);
+  @override
+  State<MainPage> createState() => _MainPageState();
+}
+
+class _MainPageState extends State<MainPage> {
+  final _tab = <Tab>[
+    const Tab(text: '地図', icon: Icon(Icons.map_outlined)),
+    const Tab(text: 'インポート', icon: Icon(Icons.settings)),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: _tab.length,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text('地図アプリ'.toString()),
+          bottom: TabBar(
+            tabs: _tab,
+          ),
+        ),
+        body: const TabBarView(children: [
+          SettingPage(),
+          MapPage(),
+        ]),
+      ),
+    );
+  }
+}
+
+class MapPage extends StatefulWidget {
+  const MapPage({Key? key}) : super(key: key);
+  @override
+  State<MapPage> createState() => _MapPageState();
+}
+
+class _MapPageState extends State<MapPage> {
+  final controller = MapController(
+    location: LatLng(35.68, 51.41),
+    zoom: 17,
+  );
+  final String _mapboxAccessToken =
+      'pk.eyJ1IjoibW9vbmdpZnQiLCJhIjoiY2lqNzMxd3lzMDAxcnpzbHZsMWVraXAzeSJ9.0kLZ692L3dLWZzrvGeY37w';
+
+  final markers = [
+    LatLng(35.674, 51.41),
+    LatLng(35.676, 51.41),
+    LatLng(35.678, 51.41),
+    LatLng(35.68, 51.41),
+    LatLng(35.682, 51.41),
+    LatLng(35.684, 51.41),
+    LatLng(35.686, 51.41),
+  ];
+
+  Offset? _dragStart;
+  double _scaleStart = 1.0;
+  void _onScaleStart(ScaleStartDetails details) {
+    _dragStart = details.focalPoint;
+    _scaleStart = 1.0;
+  }
+
+  void _onScaleUpdate(ScaleUpdateDetails details) {
+    final scaleDiff = details.scale - _scaleStart;
+    _scaleStart = details.scale;
+
+    if (scaleDiff > 0) {
+      controller.zoom += 0.02;
+      setState(() {});
+    } else if (scaleDiff < 0) {
+      controller.zoom -= 0.02;
+      setState(() {});
+    } else {
+      final now = details.focalPoint;
+      final diff = now - _dragStart!;
+      _dragStart = now;
+      controller.drag(diff.dx, diff.dy);
+      setState(() {});
+    }
+  }
+
+  Widget _buildMarkerWidget(Offset pos, Color color) {
+    return Positioned(
+      left: pos.dx - 16,
+      top: pos.dy - 16,
+      width: 40,
+      height: 40,
+      child: Icon(Icons.location_on, color: color),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MapLayoutBuilder(
+      controller: controller,
+      builder: (context, transformer) {
+        final markerPositions =
+            markers.map(transformer.fromLatLngToXYCoords).toList();
+
+        final markerWidgets = markerPositions.map(
+          (pos) => _buildMarkerWidget(pos, Colors.red),
+        );
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onDoubleTap: () {
+            controller.zoom += 0.8;
+            setState(() {});
+          },
+          onScaleStart: _onScaleStart,
+          onScaleUpdate: _onScaleUpdate,
+          onTapUp: (details) {
+            final location =
+                transformer.fromXYCoordsToLatLng(details.localPosition);
+
+            final clicked = transformer.fromLatLngToXYCoords(location);
+            print('onTapUp');
+            print('${location.longitude}, ${location.latitude}');
+            print('${clicked.dx}, ${clicked.dy}');
+            print('${details.localPosition.dx}, ${details.localPosition.dy}');
+          },
+          child: Listener(
+            behavior: HitTestBehavior.opaque,
+            onPointerSignal: (event) {
+              if (event is PointerScrollEvent) {
+                final delta = event.scrollDelta;
+
+                controller.zoom -= delta.dy / 1000.0;
+                setState(() {});
+              }
+            },
+            child: Stack(
+              children: [
+                Map(
+                  controller: controller,
+                  builder: (context, x, y, z) {
+                    //Mapbox Streets
+                    final url =
+                        'https://api.mapbox.com/styles/v1/mapbox/streets-v11/tiles/$z/$x/$y?access_token=$_mapboxAccessToken';
+                    return Image(image: NetworkImage(url));
+                  },
+                ),
+                ...markerWidgets,
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class SettingPage extends StatefulWidget {
+  const SettingPage({Key? key}) : super(key: key);
+  @override
+  State<SettingPage> createState() => _SettingPageState();
+}
+
+class _SettingPageState extends State<SettingPage> {
+  String _log = '';
+
+  Future<void> importGeoPoint() async {
+    String loadData = await rootBundle.loadString('json/yamanote.json');
+    final stations = json.decode(loadData);
+    stations.forEach((params) async {
+      var geo = NCMBGeoPoint(
+          double.parse(params['latitude']), double.parse(params['longitude']));
+      var station = NCMBObject('Station');
+      station
+        ..set('name', params['name'])
+        ..set('geo', geo);
+      await station.save();
+      setState(() {
+        _log = "$station.get('name')を保存しました\n$_log";
+      });
+      // print(station));
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+        child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        const Text(
+          '山手線のデータをインポートします',
+        ),
+        TextButton(onPressed: importGeoPoint, child: const Text('インポート')),
+        Text(_log),
+      ],
+    ));
+  }
+}
+/*
 class MyHomePage extends StatefulWidget {
   const MyHomePage({Key? key, required this.title}) : super(key: key);
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
   final String title;
-
   @override
   State<MyHomePage> createState() => _MyHomePageState();
 }
 
 class _MyHomePageState extends State<MyHomePage> {
   int _counter = 0;
-
   void _incrementCounter() {
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
       _counter++;
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
-    return Scaffold(
-      appBar: AppBar(
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          const Text(
+            'You have pushed the button this many times:',
+          ),
+          Text(
+            '$_counter',
+            style: Theme.of(context).textTheme.headline4,
+          ),
+        ],
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Invoke "debug painting" (press "p" in the console, choose the
-          // "Toggle Debug Paint" action from the Flutter Inspector in Android
-          // Studio, or the "Toggle Debug Paint" command in Visual Studio Code)
-          // to see the wireframe for each widget.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text(
-              'You have pushed the button this many times:',
-            ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headline4,
-            ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
     );
   }
 }
+*/
