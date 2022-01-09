@@ -51,8 +51,8 @@ class _MainPageState extends State<MainPage> {
           ),
         ),
         body: const TabBarView(children: [
-          SettingPage(),
           MapPage(),
+          SettingPage(),
         ]),
       ),
     );
@@ -67,28 +67,21 @@ class MapPage extends StatefulWidget {
 
 class _MapPageState extends State<MapPage> {
   final controller = MapController(
-    location: LatLng(35.68, 51.41),
-    zoom: 17,
+    location: LatLng(35.6585805, 139.7454329),
+    zoom: 13,
   );
   final String _mapboxAccessToken =
       'pk.eyJ1IjoibW9vbmdpZnQiLCJhIjoiY2lqNzMxd3lzMDAxcnpzbHZsMWVraXAzeSJ9.0kLZ692L3dLWZzrvGeY37w';
-
-  final markers = [
-    LatLng(35.674, 51.41),
-    LatLng(35.676, 51.41),
-    LatLng(35.678, 51.41),
-    LatLng(35.68, 51.41),
-    LatLng(35.682, 51.41),
-    LatLng(35.684, 51.41),
-    LatLng(35.686, 51.41),
-  ];
-
   Offset? _dragStart;
   double _scaleStart = 1.0;
   void _onScaleStart(ScaleStartDetails details) {
     _dragStart = details.focalPoint;
     _scaleStart = 1.0;
   }
+
+  List<NCMBObject> _stations = [];
+  List<Widget> _markers = [];
+  var _transformer;
 
   void _onScaleUpdate(ScaleUpdateDetails details) {
     final scaleDiff = details.scale - _scaleStart;
@@ -119,62 +112,108 @@ class _MapPageState extends State<MapPage> {
     );
   }
 
+  Future<void> getStations() async {
+    var query = NCMBQuery('Station');
+    query.limit(100);
+    var stations = await query.fetchAll();
+    setState(() {
+      _stations = stations.map((s) => s as NCMBObject).toList();
+    });
+  }
+
+  List<Widget> getMarkers() {
+    final markerPositions = _stations.map((station) {
+      var geo = station.get('geo') as NCMBGeoPoint;
+      return _transformer
+          .fromLatLngToXYCoords(LatLng(geo.latitude!, geo.longitude!));
+    }).toList();
+    var markers = markerPositions
+        .map(
+          (pos) => _buildMarkerWidget(pos, Colors.red),
+        )
+        .toList();
+    return markers;
+  }
+
+  void clearStationMarker() {
+    if (_markers.isNotEmpty) {
+      setState(() {
+        _markers.clear();
+      });
+    } else {
+      var markers = getMarkers();
+      setState(() {
+        _markers = markers;
+      });
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    getStations();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return MapLayoutBuilder(
-      controller: controller,
-      builder: (context, transformer) {
-        final markerPositions =
-            markers.map(transformer.fromLatLngToXYCoords).toList();
-
-        final markerWidgets = markerPositions.map(
-          (pos) => _buildMarkerWidget(pos, Colors.red),
-        );
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onDoubleTap: () {
-            controller.zoom += 0.8;
-            setState(() {});
-          },
-          onScaleStart: _onScaleStart,
-          onScaleUpdate: _onScaleUpdate,
-          onTapUp: (details) {
-            final location =
-                transformer.fromXYCoordsToLatLng(details.localPosition);
-
-            final clicked = transformer.fromLatLngToXYCoords(location);
-            print('onTapUp');
-            print('${location.longitude}, ${location.latitude}');
-            print('${clicked.dx}, ${clicked.dy}');
-            print('${details.localPosition.dx}, ${details.localPosition.dy}');
-          },
-          child: Listener(
+    return Scaffold(
+      appBar: null,
+      body: MapLayoutBuilder(
+        controller: controller,
+        builder: (context, transformer) {
+          _transformer = transformer;
+          return GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onPointerSignal: (event) {
-              if (event is PointerScrollEvent) {
-                final delta = event.scrollDelta;
-
-                controller.zoom -= delta.dy / 1000.0;
-                setState(() {});
-              }
+            onDoubleTap: () {
+              controller.zoom += 0.8;
+              setState(() {});
             },
-            child: Stack(
-              children: [
-                Map(
-                  controller: controller,
-                  builder: (context, x, y, z) {
-                    //Mapbox Streets
-                    final url =
-                        'https://api.mapbox.com/styles/v1/mapbox/streets-v11/tiles/$z/$x/$y?access_token=$_mapboxAccessToken';
-                    return Image(image: NetworkImage(url));
-                  },
-                ),
-                ...markerWidgets,
-              ],
+            onScaleStart: _onScaleStart,
+            onScaleUpdate: _onScaleUpdate,
+            onTapUp: (details) {
+              final location =
+                  transformer.fromXYCoordsToLatLng(details.localPosition);
+
+              final clicked = transformer.fromLatLngToXYCoords(location);
+              print('onTapUp');
+              print('${location.longitude}, ${location.latitude}');
+              print('${clicked.dx}, ${clicked.dy}');
+              print('${details.localPosition.dx}, ${details.localPosition.dy}');
+            },
+            child: Listener(
+              behavior: HitTestBehavior.opaque,
+              onPointerSignal: (event) {
+                if (event is PointerScrollEvent) {
+                  final delta = event.scrollDelta;
+
+                  controller.zoom -= delta.dy / 1000.0;
+                  setState(() {});
+                }
+              },
+              child: Stack(
+                children: [
+                  Map(
+                    controller: controller,
+                    builder: (context, x, y, z) {
+                      //Mapbox Streets
+                      final url =
+                          'https://api.mapbox.com/styles/v1/mapbox/streets-v11/tiles/$z/$x/$y?access_token=$_mapboxAccessToken';
+                      return Image(image: NetworkImage(url));
+                    },
+                  ),
+                  ..._markers,
+                ],
+              ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          clearStationMarker();
+        },
+        child: const Icon(Icons.remove_circle_outline),
+      ),
     );
   }
 }
@@ -187,23 +226,41 @@ class SettingPage extends StatefulWidget {
 
 class _SettingPageState extends State<SettingPage> {
   String _log = '';
+  final String className = 'Station';
+
+  Future<void> deleteAllStations() async {
+    var query = NCMBQuery(className);
+    query.limit(100);
+    var ary = await query.fetchAll();
+    for (var station in ary) {
+      station.delete();
+    }
+  }
 
   Future<void> importGeoPoint() async {
+    setState(() {
+      _log = '';
+    });
+    deleteAllStations();
     String loadData = await rootBundle.loadString('json/yamanote.json');
     final stations = json.decode(loadData);
     stations.forEach((params) async {
-      var geo = NCMBGeoPoint(
-          double.parse(params['latitude']), double.parse(params['longitude']));
-      var station = NCMBObject('Station');
-      station
-        ..set('name', params['name'])
-        ..set('geo', geo);
-      await station.save();
+      var station = await saveStation(params);
       setState(() {
-        _log = "$station.get('name')を保存しました\n$_log";
+        _log = "${station.get('name')}を保存しました\n$_log";
       });
-      // print(station));
     });
+  }
+
+  Future<NCMBObject> saveStation(params) async {
+    var geo = NCMBGeoPoint(
+        double.parse(params['latitude']), double.parse(params['longitude']));
+    var station = NCMBObject(className);
+    station
+      ..set('name', params['name'])
+      ..set('geo', geo);
+    await station.save();
+    return station;
   }
 
   @override

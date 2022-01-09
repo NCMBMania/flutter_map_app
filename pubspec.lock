@@ -176,7 +176,7 @@ packages:
       name: ncmb
       url: "https://pub.dartlang.org"
     source: hosted
-    version: "2.2.0"
+    version: "2.3.0"
   package_info:
     dependency: transitive
     description:
