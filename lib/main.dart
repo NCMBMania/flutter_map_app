@@ -79,9 +79,9 @@ class _MapPageState extends State<MapPage> {
     _scaleStart = 1.0;
   }
 
-  List<NCMBObject> _stations = [];
+  final List<LatLng> _clickLocations = [];
   List<Widget> _markers = [];
-  var _transformer;
+  MapTransformer? _transformer;
 
   void _onScaleUpdate(ScaleUpdateDetails details) {
     final scaleDiff = details.scale - _scaleStart;
@@ -112,46 +112,39 @@ class _MapPageState extends State<MapPage> {
     );
   }
 
-  Future<void> getStations() async {
-    var query = NCMBQuery('Station');
-    query.limit(100);
-    var stations = await query.fetchAll();
-    setState(() {
-      _stations = stations.map((s) => s as NCMBObject).toList();
-    });
-  }
-
-  List<Widget> getMarkers() {
-    final markerPositions = _stations.map((station) {
-      var geo = station.get('geo') as NCMBGeoPoint;
-      return _transformer
-          .fromLatLngToXYCoords(LatLng(geo.latitude!, geo.longitude!));
-    }).toList();
-    var markers = markerPositions
-        .map(
-          (pos) => _buildMarkerWidget(pos, Colors.red),
-        )
-        .toList();
-    return markers;
-  }
-
-  void clearStationMarker() {
-    if (_markers.isNotEmpty) {
-      setState(() {
-        _markers.clear();
-      });
+  Future<List<NCMBObject>> getStations() async {
+    if (_clickLocations.length == 2) {
+      return await getStationsSquare();
     } else {
-      var markers = getMarkers();
-      setState(() {
-        _markers = markers;
-      });
+      return await getStationsNear();
     }
   }
 
-  @override
-  void initState() {
-    super.initState();
-    getStations();
+  Future<List<NCMBObject>> getStationsNear() async {
+    var location = _clickLocations[0];
+    var geo = NCMBGeoPoint(location.latitude, location.longitude);
+    var query = NCMBQuery('Station');
+    query.withinKilometers('geo', geo, 2.5);
+    var ary = await query.fetchAll();
+    return ary.map((obj) => obj as NCMBObject).toList();
+  }
+
+  Future<List<NCMBObject>> getStationsSquare() async {
+    var locations = _clickLocations
+        .map((location) => NCMBGeoPoint(location.latitude, location.longitude))
+        .toList();
+    var query = NCMBQuery('Station');
+    query.withinSquare('geo', locations[0], locations[1]);
+    var ary = await query.fetchAll();
+    return ary.map((obj) => obj as NCMBObject).toList();
+  }
+
+  List<Widget> getMarkers(List<NCMBGeoPoint> geos, Color color) {
+    return geos.map((geo) {
+      var pos = _transformer!
+          .fromLatLngToXYCoords(LatLng(geo.latitude!, geo.longitude!));
+      return _buildMarkerWidget(pos, color);
+    }).toList();
   }
 
   @override
@@ -170,22 +163,33 @@ class _MapPageState extends State<MapPage> {
             },
             onScaleStart: _onScaleStart,
             onScaleUpdate: _onScaleUpdate,
-            onTapUp: (details) {
+            onTapUp: (details) async {
               final location =
                   transformer.fromXYCoordsToLatLng(details.localPosition);
-
-              final clicked = transformer.fromLatLngToXYCoords(location);
-              print('onTapUp');
-              print('${location.longitude}, ${location.latitude}');
-              print('${clicked.dx}, ${clicked.dy}');
-              print('${details.localPosition.dx}, ${details.localPosition.dy}');
+              if (_clickLocations.length == 2) {
+                _clickLocations[0] = _clickLocations[1];
+                _clickLocations[1] = location;
+              } else {
+                _clickLocations.add(location);
+              }
+              var clicked = _clickLocations
+                  .map((location) =>
+                      NCMBGeoPoint(location.latitude, location.longitude))
+                  .toList();
+              final markers = getMarkers(clicked, Colors.purple);
+              var ary = await getStations();
+              setState(() {
+                _markers = getMarkers(
+                    ary.map((obj) => obj.get('geo') as NCMBGeoPoint).toList(),
+                    Colors.red);
+                markers.forEach((makrer) => _markers.add(makrer));
+              });
             },
             child: Listener(
               behavior: HitTestBehavior.opaque,
               onPointerSignal: (event) {
                 if (event is PointerScrollEvent) {
                   final delta = event.scrollDelta;
-
                   controller.zoom -= delta.dy / 1000.0;
                   setState(() {});
                 }
@@ -210,7 +214,10 @@ class _MapPageState extends State<MapPage> {
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {
-          clearStationMarker();
+          setState(() {
+            _clickLocations.clear();
+            _markers.clear();
+          });
         },
         child: const Icon(Icons.remove_circle_outline),
       ),
@@ -225,7 +232,7 @@ class SettingPage extends StatefulWidget {
 }
 
 class _SettingPageState extends State<SettingPage> {
-  String _log = '';
+  final List<String> _logs = [];
   final String className = 'Station';
 
   Future<void> deleteAllStations() async {
@@ -239,7 +246,7 @@ class _SettingPageState extends State<SettingPage> {
 
   Future<void> importGeoPoint() async {
     setState(() {
-      _log = '';
+      _logs.clear();
     });
     deleteAllStations();
     String loadData = await rootBundle.loadString('json/yamanote.json');
@@ -247,7 +254,7 @@ class _SettingPageState extends State<SettingPage> {
     stations.forEach((params) async {
       var station = await saveStation(params);
       setState(() {
-        _log = "${station.get('name')}を保存しました\n$_log";
+        _logs.add("${station.get('name')}を保存しました");
       });
     });
   }
@@ -273,43 +280,13 @@ class _SettingPageState extends State<SettingPage> {
           '山手線のデータをインポートします',
         ),
         TextButton(onPressed: importGeoPoint, child: const Text('インポート')),
-        Text(_log),
+        Expanded(
+          child: ListView.builder(
+              itemBuilder: (BuildContext context, int index) =>
+                  Text(_logs[index]),
+              itemCount: _logs.length),
+        )
       ],
     ));
   }
 }
-/*
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({Key? key, required this.title}) : super(key: key);
-  final String title;
-  @override
-  State<MyHomePage> createState() => _MyHomePageState();
-}
-
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
-  void _incrementCounter() {
-    setState(() {
-      _counter++;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: <Widget>[
-          const Text(
-            'You have pushed the button this many times:',
-          ),
-          Text(
-            '$_counter',
-            style: Theme.of(context).textTheme.headline4,
-          ),
-        ],
-      ),
-    );
-  }
-}
-*/
